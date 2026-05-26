@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LangGraph RAG 면접 시뮬레이터</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="setup-panel">
+        <div class="brand">
+          <span class="mark">LG</span>
+          <div>
+            <h1>LangGraph RAG 면접</h1>
+            <p>학생부 PDF와 실제 면접 질문 DB를 연결한 로컬 시뮬레이터</p>
+          </div>
+        </div>
+
+        <section class="panel">
+          <h2>1. 생기부 인덱싱</h2>
+          <label>
+            지원 학과
+            <input id="departmentInput" type="text" value="컴퓨터공학과" />
+          </label>
+          <label>
+            생기부 PDF
+            <input id="pdfInput" type="file" accept="application/pdf" />
+          </label>
+          <button id="ingestButton">PDF 청킹 + 임베딩</button>
+          <div id="ingestResult" class="status-box">대기 중</div>
+        </section>
+
+        <section class="panel">
+          <h2>2. 면접 설정</h2>
+          <label>
+            지원 대학
+            <input id="universityInput" type="text" value="가천대학교" />
+          </label>
+          <label>
+            난이도
+            <select id="difficultyInput">
+              <option>Normal</option>
+              <option>Easy</option>
+              <option>Hard</option>
+            </select>
+          </label>
+          <button id="startButton" disabled>면접 시작</button>
+        </section>
+
+        <section class="panel compact">
+          <h2>그래프 상태</h2>
+          <dl class="state-grid">
+            <div><dt>주제</dt><dd id="topicState">-</dd></div>
+            <div><dt>액션</dt><dd id="actionState">-</dd></div>
+            <div><dt>남은 시간</dt><dd id="timeState">600초</dd></div>
+          </dl>
+        </section>
+      </aside>
+
+      <section class="interview-panel">
+        <div id="messages" class="messages">
+          <div class="message interviewer">
+            <div class="role">면접관</div>
+            <p>먼저 생기부 PDF를 인덱싱한 뒤 면접을 시작하세요.</p>
+          </div>
+        </div>
+
+        <form id="answerForm" class="answer-bar">
+          <textarea id="answerInput" rows="3" placeholder="답변을 입력하세요." disabled></textarea>
+          <div class="answer-actions">
+            <button id="sendButton" type="submit" disabled>답변 제출</button>
+            <button id="reportButton" type="button" disabled>리포트 보기</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="reportPanel" class="report-panel hidden">
+        <div class="report-header">
+          <h2>최종 리포트</h2>
+          <button id="closeReportButton" type="button">닫기</button>
+        </div>
+        <pre id="reportOutput"></pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
