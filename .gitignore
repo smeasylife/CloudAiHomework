@@ -1,0 +1,28 @@
+# Environment files
+.env
+.env.*
+!.env.example.template
+
+# Local agent instructions
+AGENTS.md
+agents.md
+agent.md
+
+# Uploaded/source documents
+*.pdf
+
+# Runtime data
+runtime/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local virtual environments
+.venv/
+venv/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
