@@ -1,44 +1,49 @@
-"""FastAPI entrypoint for the local LangGraph RAG interview toy app."""
-
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import STATIC_DIR
-from app.graph import InterviewGraph
+from app.graph import QuestionGenerationGraph
 from app.ingestion import ingest_pdf
 from app.llm import GeminiClient
 from app.rag_store import RagStore
 from app.schemas import (
-    AnswerRequest,
-    AnswerResponse,
+    GenerateQuestionsRequest,
+    GenerateQuestionsResponse,
     IngestResponse,
-    ReportResponse,
-    StartInterviewRequest,
-    StartInterviewResponse,
+    RecordStatusResponse,
 )
-from app.session_store import FIRST_QUESTION, SessionStore
 
-
-app = FastAPI(title="LangGraph RAG Interview Toy", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 llm = GeminiClient()
-rag_store = RagStore()
-session_store = SessionStore()
-interview_graph = InterviewGraph(llm=llm, rag_store=rag_store)
+rag_store: RagStore | None = None
+question_graph: QuestionGenerationGraph | None = None
+logger = logging.getLogger("uvicorn.error")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    global rag_store, question_graph
+
+    rag_store = RagStore()
+    question_graph = QuestionGenerationGraph(llm=llm, rag_store=rag_store)
+    try:
+        yield
+    finally:
+        if question_graph:
+            await question_graph.close()
+        if rag_store:
+            rag_store.close()
+
+
+app = FastAPI(title="LangGraph RAG Question Generator Toy", version="0.2.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
@@ -51,127 +56,61 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/api/records/status", response_model=RecordStatusResponse)
+async def record_status():
+    return RecordStatusResponse(has_record=get_rag_store().has_record())
+
+
 @app.post("/api/ingest", response_model=IngestResponse)
 async def ingest(
     pdf: UploadFile = File(...),
-    target_department: str = Form(...),
 ):
-    if not pdf.filename.lower().endswith(".pdf"):
+    if not pdf.filename or not pdf.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
 
     try:
-        question_seed_count = await rag_store.seed_interview_questions(llm)
+        store = get_rag_store()
+        question_seed_count = await store.seed_interview_questions(llm)
         pdf_bytes = await pdf.read()
-        record_id, chunk_count = await ingest_pdf(
+        chunk_count = await ingest_pdf(
             pdf_bytes=pdf_bytes,
-            target_department=target_department,
             llm=llm,
-            rag_store=rag_store,
+            rag_store=store,
         )
         return IngestResponse(
-            record_id=record_id,
             chunk_count=chunk_count,
             question_seed_count=question_seed_count,
         )
     except Exception as exc:
+        message = str(exc) or repr(exc)
+        logger.error("PDF ingest failed: %s: %s", type(exc).__name__, message)
+        raise HTTPException(status_code=500, detail=message) from exc
+
+
+@app.post("/api/questions/generate", response_model=GenerateQuestionsResponse)
+async def generate_questions(request: GenerateQuestionsRequest):
+    graph = get_question_graph()
+    try:
+        result = await graph.run(
+            target_school=request.target_school,
+            target_major=request.target_major,
+            interview_type=request.interview_type,
+        )
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-
-@app.post("/api/interview/start", response_model=StartInterviewResponse)
-async def start_interview(request: StartInterviewRequest):
-    session = session_store.create_session(
-        record_id=request.record_id,
-        target_university=request.target_university,
-        target_department=request.target_department,
-        difficulty=request.difficulty,
-    )
-    return StartInterviewResponse(session_id=session["session_id"], first_question=FIRST_QUESTION)
-
-
-@app.post("/api/interview/answer", response_model=AnswerResponse)
-async def answer_interview(request: AnswerRequest):
-    try:
-        session = session_store.get(request.session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    if session.get("status") == "COMPLETED":
-        return AnswerResponse(
-            next_question=None,
-            current_sub_topic=session.get("current_sub_topic", ""),
-            action="wrap_up",
-            remaining_time=session.get("remaining_time", 0),
-            is_finished=True,
-        )
-
-    result = await interview_graph.run(
-        session=session,
-        answer=request.answer,
-        response_time=request.response_time,
-    )
-    update_session_from_graph(session, result, request.answer, request.response_time)
-    session_store.update(session)
-
-    return AnswerResponse(
-        next_question=result.get("next_question"),
-        current_sub_topic=session.get("current_sub_topic", ""),
-        action=result.get("action", "new_topic"),
-        remaining_time=session.get("remaining_time", 0),
-        is_finished=session.get("status") == "COMPLETED",
+    return GenerateQuestionsResponse(
+        questions=result.get("approved_questions", []),
     )
 
 
-@app.get("/api/interview/{session_id}/report", response_model=ReportResponse)
-async def report(session_id: str):
-    try:
-        session = session_store.get(session_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    report_data = session.get("final_report") or {
-        "message": "아직 면접이 종료되지 않았습니다.",
-        "interview_logs": session.get("interview_logs", []),
-    }
-    return ReportResponse(
-        session_id=session_id,
-        status=session.get("status", "IN_PROGRESS"),
-        report=report_data,
-    )
+def get_rag_store() -> RagStore:
+    if rag_store is None:
+        raise HTTPException(status_code=503, detail="RAG 저장소가 아직 준비되지 않았습니다.")
+    return rag_store
 
 
-def update_session_from_graph(
-    session: dict,
-    result: dict,
-    answer: str,
-    response_time: int,
-) -> None:
-    logs = session.get("interview_logs", [])
-    if logs:
-        logs[-1]["answer"] = answer
-        logs[-1]["response_time"] = response_time
-        logs[-1]["timestamp"] = datetime.now().isoformat(timespec="seconds")
-
-    session["remaining_time"] = result.get("remaining_time", session.get("remaining_time", 600))
-    session["current_sub_topic"] = result.get("current_sub_topic", session.get("current_sub_topic", ""))
-    session["asked_sub_topics"] = result.get("asked_sub_topics", session.get("asked_sub_topics", []))
-    session["follow_up_count"] = result.get("follow_up_count", session.get("follow_up_count", 0))
-    session["question_count"] = result.get("question_count", session.get("question_count", len(logs)))
-
-    if result.get("action") == "wrap_up":
-        session["status"] = "COMPLETED"
-        session["final_report"] = result.get("final_report", {})
-        return
-
-    next_question = result.get("next_question")
-    if next_question:
-        logs.append(
-            {
-                "question": next_question,
-                "answer": "",
-                "response_time": 0,
-                "sub_topic": session.get("current_sub_topic", ""),
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-            }
-        )
-    session["interview_logs"] = logs
-
+def get_question_graph() -> QuestionGenerationGraph:
+    if question_graph is None:
+        raise HTTPException(status_code=503, detail="LangGraph가 아직 준비되지 않았습니다.")
+    return question_graph

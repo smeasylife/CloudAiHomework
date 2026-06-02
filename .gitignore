@@ -1,28 +1,25 @@
-# Environment files
 .env
 .env.*
-!.env.example.template
+!.env.example
 
-# Local agent instructions
 AGENTS.md
 agents.md
 agent.md
 
-# Uploaded/source documents
 *.pdf
 
-# Runtime data
 runtime/
 
-# Python cache
+app/question_evaluation_temp.py
+generated_questions*.txt
+question_evaluation*.txt
+
 __pycache__/
 *.py[cod]
 
-# Local virtual environments
 .venv/
 venv/
 
-# OS/editor files
 .DS_Store
 .idea/
 .vscode/
