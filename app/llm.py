@@ -10,10 +10,14 @@ from google.genai import errors, types
 from app.config import settings
 
 
+GEMINI_CHAT_MODEL = "gemini-2.5-flash"
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+
+
 class GeminiClient:
     def __init__(self) -> None:
         self.client = genai.Client(api_key=settings.google_api_key)
-        self.chat_model = settings.gemini_chat_model
+        self.chat_model = GEMINI_CHAT_MODEL
         self.fallback_chat_model = "gemini-2.5-flash-lite"
 
     async def generate_content(
@@ -82,7 +86,7 @@ class GeminiClient:
         if not texts:
             return []
         response = await self.client.aio.models.embed_content(
-            model=settings.gemini_embedding_model,
+            model=GEMINI_EMBEDDING_MODEL,
             contents=texts,
             config=types.EmbedContentConfig(output_dimensionality=768),
         )
