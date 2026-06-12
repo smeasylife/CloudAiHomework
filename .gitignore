@@ -8,10 +8,6 @@ agent.md
 
 runtime/
 
-app/question_evaluation_temp.py
-generated_questions*.txt
-question_evaluation*.txt
-
 __pycache__/
 *.py[cod]
 
